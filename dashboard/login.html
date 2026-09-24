@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Re-ID System — Login</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #0a0d12; --surface: #111620; --border: #1e2a3a;
+      --cyan: #00d4ff; --text: #e8edf5; --muted: #8a9ab5;
+      --font: 'Inter', sans-serif; --mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh; background: var(--bg); color: var(--text);
+      font-family: var(--font); display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+      width: 380px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 40px 36px;
+      box-shadow: 0 20px 80px rgba(0,0,0,0.6);
+    }
+    .logo { display: flex; gap: 10px; align-items: center; margin-bottom: 28px; }
+    .logo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--cyan); }
+    h1 { font-size: 18px; font-weight: 600; }
+    .sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; margin-top: 24px; letter-spacing: 0.4px; }
+    input[type="password"] {
+      width: 100%; padding: 11px 14px; border-radius: 8px;
+      background: #0a0d12; border: 1px solid var(--border);
+      color: var(--text); font-family: var(--mono); font-size: 14px;
+      outline: none; transition: border-color 0.2s;
+    }
+    input[type="password"]:focus { border-color: var(--cyan); }
+    .hint {
+      font-size: 11px; color: var(--muted); margin-top: 8px;
+    }
+    button {
+      margin-top: 24px; width: 100%; padding: 13px;
+      border-radius: 8px; border: none;
+      background: var(--cyan); color: #000;
+      font-weight: 700; font-size: 14px; cursor: pointer;
+      transition: opacity 0.2s; letter-spacing: 0.3px;
+    }
+    button:hover { opacity: 0.88; }
+    #err-msg { margin-top: 14px; font-size: 12px; color: #ff5c5c; min-height: 16px; }
+    .no-auth { font-size: 12px; color: var(--muted); text-align: center; margin-top: 18px; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-grid">
+      <div class="dot"></div><div class="dot"></div>
+      <div class="dot"></div><div class="dot"></div>
+    </div>
+    <div>
+      <h1>Re-ID Dashboard</h1>
+      <div class="sub">Cross-Camera Person Tracking</div>
+    </div>
+  </div>
+
+  <label for="api-key-input">API KEY</label>
+  <input type="password" id="api-key-input" placeholder="Enter your API key…" autocomplete="current-password"/>
+  <div class="hint">Set via <code>REID_API_KEY</code> environment variable or <code>config.py</code>.</div>
+
+  <button id="login-btn">Access Dashboard</button>
+  <div id="err-msg"></div>
+  <div class="no-auth" id="no-auth-hint" style="display:none">Auth is disabled — <a href="/" style="color:var(--cyan)">Go to dashboard</a></div>
+</div>
+
+<script>
+(async () => {
+  // Check if auth is even enabled
+  try {
+    const r = await fetch("/health");
+    const d = await r.json();
+    // If /health works without key, auth may be off — try / directly
+    const test = await fetch("/cameras");
+    if (test.status !== 401) {
+      window.location.href = "/";
+      return;
+    }
+  } catch (_) {}
+
+  const input = document.getElementById("api-key-input");
+  const btn   = document.getElementById("login-btn");
+  const err   = document.getElementById("err-msg");
+
+  async function tryLogin() {
+    const key = input.value.trim();
+    if (!key) { err.textContent = "Please enter an API key."; return; }
+    btn.textContent = "Verifying…"; btn.disabled = true;
+    try {
+      const res = await fetch("/cameras", {
+        headers: { "Authorization": `Bearer ${key}` }
+      });
+      if (res.ok) {
+        sessionStorage.setItem("reid_api_key", key);
+        window.location.href = "/";
+      } else {
+        err.textContent = "Invalid API key. Check REID_API_KEY in your environment.";
+      }
+    } catch (e) {
+      err.textContent = "Connection failed. Is the server running?";
+    } finally {
+      btn.textContent = "Access Dashboard"; btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener("click", tryLogin);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
+  input.focus();
+})();
+</script>
+</body>
+</html>

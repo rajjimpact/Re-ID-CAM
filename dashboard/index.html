@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cross-Camera Re-ID · Operations Dashboard</title>
+  <meta name="description" content="Live cross-camera person re-identification dashboard — real-time shopper tracking, zone analytics, and identity management." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════ -->
+<header class="site-header" role="banner">
+  <div class="header-left">
+    <div class="logo-mark" aria-hidden="true">
+      <span class="logo-dot"></span><span class="logo-dot"></span>
+      <span class="logo-dot"></span><span class="logo-dot"></span>
+    </div>
+    <div class="header-title">
+      <h1>Cross-Camera Re-ID</h1>
+      <span class="header-subtitle">Multi-View Person Tracking</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div id="ws-status" class="ws-indicator reconnecting" role="status" aria-live="polite">
+      <span id="ws-dot" class="ws-dot" aria-hidden="true"></span>
+      <span id="ws-label">connecting…</span>
+    </div>
+    <div id="clock-display" class="clock mono" aria-label="Current time"></div>
+    <button id="export-btn" class="btn-export" title="Export all shopper data as CSV">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export CSV
+    </button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════
+     MAIN GRID
+════════════════════════════════════════════════ -->
+<main class="main-grid" role="main">
+
+  <!-- Camera Wall -->
+  <section class="panel panel-cameras" aria-labelledby="cameras-heading">
+    <div class="panel-header">
+      <h2 id="cameras-heading">Camera Feeds</h2>
+      <span id="cam-count-badge" class="badge" aria-live="polite">—</span>
+    </div>
+    <div id="camera-wall" class="camera-wall" role="list" aria-label="Live camera feeds"></div>
+  </section>
+
+  <!-- Shopper Ledger -->
+  <section class="panel panel-ledger" aria-labelledby="ledger-heading">
+    <div class="panel-header">
+      <h2 id="ledger-heading">Identity Ledger</h2>
+      <span id="ledger-count-badge" class="badge" aria-live="polite">0 IDs</span>
+    </div>
+    <div class="ledger-filters">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="active">Active</button>
+      <button class="filter-btn" data-filter="inactive">Inactive</button>
+    </div>
+    <div id="shopper-ledger" class="shopper-ledger" role="list" aria-label="Global Shopper IDs">
+      <div class="ledger-placeholder">
+        <div class="placeholder-icon" aria-hidden="true">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        </div>
+        <p>Waiting for identities…</p>
+        <p class="placeholder-sub">Detections will appear here as people are tracked across cameras.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════
+     RE-ID REGISTER  (Phase 9)
+════════════════════════════════════════════════ -->
+<section class="register-section" aria-labelledby="register-heading">
+  <div class="register-header">
+    <div class="register-title-group">
+      <h2 id="register-heading">Re-ID Register</h2>
+      <span class="register-subtitle">Exemplar gallery per registered identity</span>
+    </div>
+    <div class="register-actions">
+      <span id="register-exemplar-badge" class="badge badge-cyan" aria-live="polite">0 exemplars</span>
+      <button id="register-reset-btn" class="btn-danger" title="Flush all identities and restart from GSI-0001">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+        Reset Registry
+      </button>
+    </div>
+  </div>
+
+  <div class="register-table-wrap">
+    <table class="register-table" id="register-table" role="grid">
+      <thead>
+        <tr>
+          <th scope="col">Global ID</th>
+          <th scope="col">First Seen</th>
+          <th scope="col">Last Seen</th>
+          <th scope="col">Gallery Size</th>
+          <th scope="col">Camera Breakdown</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody id="register-tbody">
+        <tr id="register-placeholder-row">
+          <td colspan="6" class="register-placeholder-cell">
+            <span>No identities registered yet — start a camera feed to begin.</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════
+     ANALYTICS FOOTER
+════════════════════════════════════════════════ -->
+<footer class="analytics-footer" role="contentinfo">
+  <div class="analytics-stats">
+    <div class="stat-card">
+      <div class="stat-label">Unique Visitors</div>
+      <div id="stat-unique-val" class="stat-value mono">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Currently Active</div>
+      <div id="stat-active-val" class="stat-value mono active-count">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Dwell Time</div>
+      <div id="stat-dwell-val" class="stat-value mono">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cross-Camera Matches</div>
+      <div id="stat-match-val" class="stat-value mono">—</div>
+    </div>
+  </div>
+  <div class="analytics-zones">
+    <div class="zone-bars-label">Zone Popularity</div>
+    <div id="zone-bars" class="zone-bars" role="list" aria-label="Zone visit counts"></div>
+  </div>
+  <div class="footer-meta">
+    <span id="analytics-updated" class="mono">—</span>
+    <span class="model-badge">ResNet50 · Market-1501 · CUDA</span>
+  </div>
+</footer>
+
+<!-- ═══════════════════════════════════════════════
+     SHOPPER DETAIL MODAL (Phase 6)
+════════════════════════════════════════════════ -->
+<div id="detail-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+  <div class="modal-panel">
+    <div class="modal-header">
+      <div>
+        <div id="modal-title" class="modal-gsi mono">—</div>
+        <div id="modal-status" class="modal-status"></div>
+      </div>
+      <button id="modal-close" class="modal-close-btn" aria-label="Close detail panel">&times;</button>
+    </div>
+
+    <!-- Journey timeline -->
+    <div class="modal-section">
+      <div class="modal-section-label">Journey Path</div>
+      <div id="modal-journey" class="journey-timeline"></div>
+    </div>
+
+    <!-- Stats row -->
+    <div class="modal-stats">
+      <div class="modal-stat">
+        <div class="modal-stat-label">First Seen</div>
+        <div id="modal-first-seen" class="modal-stat-val mono">—</div>
+      </div>
+      <div class="modal-stat">
+        <div class="modal-stat-label">Last Seen</div>
+        <div id="modal-last-seen" class="modal-stat-val mono">—</div>
+      </div>
+      <div class="modal-stat">
+        <div class="modal-stat-label">Total Dwell</div>
+        <div id="modal-total-dwell" class="modal-stat-val mono">—</div>
+      </div>
+      <div class="modal-stat">
+        <div class="modal-stat-label">Zone Visits</div>
+        <div id="modal-visit-count" class="modal-stat-val mono">—</div>
+      </div>
+    </div>
+
+    <!-- Detailed visit table -->
+    <div class="modal-section">
+      <div class="modal-section-label">Zone Visit History</div>
+      <div class="modal-table-wrap">
+        <table class="visit-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Zone</th><th>Camera</th>
+              <th>Enter</th><th>Exit</th><th>Dwell</th>
+            </tr>
+          </thead>
+          <tbody id="modal-visit-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
