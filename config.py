@@ -1,18 +1,24 @@
 """
 config.py  —  Central configuration for the Cross-Camera Re-ID system.
 
-To connect real cameras, edit the `cameras` list below:
-  - source = 0, 1, 2 …   → laptop/USB webcam device index
-  - source = "videos/cam0.avi"  → local video file (loops)
-  - source = "rtsp://user:pass@192.168.1.x/stream"  → IP camera
+Default setup: 2 live cameras (Laptop Webcam + Phone Camera).
 
-Environment variables override everything here (Phase 8 / .env support):
+Camera source options:
+  - source = 0, 1, 2 …          → laptop/USB webcam (device index)
+  - source = "http://x.x.x.x:8080/video"  → Phone via IP Webcam app (Wi-Fi)
+  - source = "rtsp://x.x.x.x:8554/live"  → Phone via RTSP stream app
+  - source = "videos/cam0.avi"  → local video file (loops)
+
+Environment variables override everything here (.env support):
   REID_API_KEY   – API key for dashboard auth
   REID_HOST      – bind address (default 0.0.0.0)
   REID_PORT      – bind port   (default 8000)
-  CAM_n_SOURCE   – source for camera n   (n = 0,1,2,3)
-  CAM_n_ZONE     – zone name  for camera n
-  CAM_n_NAME     – display name for camera n
+  CAM_0_SOURCE   – Laptop webcam source  (default: 0)
+  CAM_0_ZONE     – Laptop webcam zone name
+  CAM_0_NAME     – Laptop webcam display name
+  CAM_1_SOURCE   – Phone camera source   (default: http://192.168.1.x:8080/video)
+  CAM_1_ZONE     – Phone camera zone name
+  CAM_1_NAME     – Phone camera display name
 """
 from __future__ import annotations
 import os
@@ -101,34 +107,42 @@ class SystemConfig:
     # ── Persistence (Phase 8) ─────────────────────────────────────────────────
     db_path: str = "data/reid_identities.db"   # SQLite database location
 
-    # ── Cameras  (Phase 5: EPFL POM real footage) ─────────────────────────────
-    # The EPFL POM dataset has 4 synchronized views of the same corridor.
-    # Each view becomes one "zone" for demonstration purposes.
-    # Swap source= to "rtsp://..." for live IP cameras, or 0/1/2 for webcams.
+    # ── Cameras  (2 live cameras: Laptop Webcam + Phone Camera) ──────────────
+    # Camera 0: Laptop built-in or USB webcam (device index 0).
+    # Camera 1: Phone camera streamed over Wi-Fi via the "IP Webcam" app.
+    #
+    # HOW TO USE:
+    #   Option A — Edit .env (no code change needed):
+    #     CAM_0_SOURCE=0
+    #     CAM_1_SOURCE=http://192.168.1.45:8080/video
+    #
+    #   Option B — Edit source= values below directly.
+    #
+    # PHONE SETUP (IP Webcam app, Android):
+    #   1. Install "IP Webcam" from Play Store (by Pavel Khlebovich).
+    #   2. Connect phone & laptop to the SAME Wi-Fi network.
+    #   3. Open app → tap "Start server" at the bottom.
+    #   4. Note the IP shown on screen, e.g. http://192.168.1.45:8080
+    #   5. Replace the IP below (or in .env) with your phone's actual IP.
+    #      Stream URL: http://<phone-ip>:8080/video
+    #
+    # PHONE SETUP (iOS — iVCam or Camo):
+    #   Use iVCam (free) on iOS → installs a virtual webcam on Windows.
+    #   Your phone becomes device index 1 or 2 automatically.
+    #   Set CAM_1_SOURCE=1 (or 2) in .env.
     cameras: List[CameraConfig] = field(default_factory=lambda: [
         CameraConfig(
             camera_id="cam_0",
-            name=_cam_name(0, "View A"),
+            name=_cam_name(0, "Laptop Webcam"),
             zone=_cam_zone(0, "Zone A"),
-            source=_cam_source(0, "videos/cam0.avi"),
+            source=_cam_source(0, "0"),  # Built-in laptop webcam (device index 0)
         ),
         CameraConfig(
             camera_id="cam_1",
-            name=_cam_name(1, "View B"),
+            name=_cam_name(1, "Phone Camera"),
             zone=_cam_zone(1, "Zone B"),
-            source=_cam_source(1, "videos/cam1.avi"),
-        ),
-        CameraConfig(
-            camera_id="cam_2",
-            name=_cam_name(2, "View C"),
-            zone=_cam_zone(2, "Zone C"),
-            source=_cam_source(2, "videos/cam2.avi"),
-        ),
-        CameraConfig(
-            camera_id="cam_3",
-            name=_cam_name(3, "View D"),
-            zone=_cam_zone(3, "Zone D"),
-            source=_cam_source(3, "videos/cam3.avi"),
+            # Replace 192.168.1.45 with your phone's actual IP shown in IP Webcam app
+            source=_cam_source(1, "http://192.168.1.45:8080/video"),
         ),
     ])
 
