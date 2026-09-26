@@ -107,42 +107,35 @@ class SystemConfig:
     # ── Persistence (Phase 8) ─────────────────────────────────────────────────
     db_path: str = "data/reid_identities.db"   # SQLite database location
 
-    # ── Cameras  (2 live cameras: Laptop Webcam + Phone Camera) ──────────────
-    # Camera 0: Laptop built-in or USB webcam (device index 0).
-    # Camera 1: Phone camera streamed over Wi-Fi via the "IP Webcam" app.
-    #
-    # HOW TO USE:
-    #   Option A — Edit .env (no code change needed):
-    #     CAM_0_SOURCE=0
-    #     CAM_1_SOURCE=http://192.168.1.45:8080/video
-    #
-    #   Option B — Edit source= values below directly.
-    #
-    # PHONE SETUP (IP Webcam app, Android):
-    #   1. Install "IP Webcam" from Play Store (by Pavel Khlebovich).
-    #   2. Connect phone & laptop to the SAME Wi-Fi network.
-    #   3. Open app → tap "Start server" at the bottom.
-    #   4. Note the IP shown on screen, e.g. http://192.168.1.45:8080
-    #   5. Replace the IP below (or in .env) with your phone's actual IP.
-    #      Stream URL: http://<phone-ip>:8080/video
-    #
-    # PHONE SETUP (iOS — iVCam or Camo):
-    #   Use iVCam (free) on iOS → installs a virtual webcam on Windows.
-    #   Your phone becomes device index 1 or 2 automatically.
-    #   Set CAM_1_SOURCE=1 (or 2) in .env.
+    # ── Cameras (4 live cameras: 1 Laptop Webcam + 3 Phone Cameras) ─────────
+    # Camera 0: Laptop built-in or USB webcam (device index 0)
+    # Camera 1: Phone 1 (e.g. Zone B)
+    # Camera 2: Phone 2 (e.g. Zone C)
+    # Camera 3: Phone 3 (e.g. Zone D)
     cameras: List[CameraConfig] = field(default_factory=lambda: [
         CameraConfig(
             camera_id="cam_0",
             name=_cam_name(0, "Laptop Webcam"),
-            zone=_cam_zone(0, "Zone A"),
-            source=_cam_source(0, "0"),  # Built-in laptop webcam (device index 0)
+            zone=_cam_zone(0, "Zone A - Entrance"),
+            source=_cam_source(0, "0"),
         ),
         CameraConfig(
             camera_id="cam_1",
-            name=_cam_name(1, "Phone Camera"),
-            zone=_cam_zone(1, "Zone B"),
-            # Replace 192.168.1.45 with your phone's actual IP shown in IP Webcam app
-            source=_cam_source(1, "http://192.168.1.45:8080/video"),
+            name=_cam_name(1, "Phone 1"),
+            zone=_cam_zone(1, "Zone B - Electronics"),
+            source=_cam_source(1, "http://192.168.1.101:8080/video"),
+        ),
+        CameraConfig(
+            camera_id="cam_2",
+            name=_cam_name(2, "Phone 2"),
+            zone=_cam_zone(2, "Zone C - Grocery"),
+            source=_cam_source(2, "http://192.168.1.102:8080/video"),
+        ),
+        CameraConfig(
+            camera_id="cam_3",
+            name=_cam_name(3, "Phone 3"),
+            zone=_cam_zone(3, "Zone D - Checkout"),
+            source=_cam_source(3, "http://192.168.1.103:8080/video"),
         ),
     ])
 
