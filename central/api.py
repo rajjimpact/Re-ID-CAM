@@ -254,18 +254,21 @@ async def list_cameras(_: None = Depends(require_key)):
 async def stream(camera_id: str):
     # No auth on streams — browsers load <img src=...> without custom headers
     async def _gen():
-        last_sent: Optional[bytes] = None
+        last_frame: Optional[bytes] = None
         while True:
-            frame_bytes = FRAME_HUB.latest_frame(camera_id)
-            if frame_bytes and frame_bytes is not last_sent:
-                last_sent = frame_bytes
+            # Block in a thread until a *new* frame is ready (event-driven, ~0ms latency).
+            # Falls back after 2 s so the generator doesn't hang if the camera drops.
+            frame_bytes: Optional[bytes] = await asyncio.to_thread(
+                FRAME_HUB.wait_for_frame, camera_id, last_frame, 2.0
+            )
+            if frame_bytes and frame_bytes is not last_frame:
+                last_frame = frame_bytes
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n"
                     + frame_bytes
                     + b"\r\n"
                 )
-            await asyncio.sleep(0.04)
 
     return StreamingResponse(
         _gen(),

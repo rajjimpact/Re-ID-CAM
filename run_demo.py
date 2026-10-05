@@ -1,25 +1,24 @@
 """
-run_demo.py  —  Single entry-point for the Cross-Camera Re-ID System.
-                Runs everything in one process (Phase 5+).
+run.py  —  Production entry-point for the Cross-Camera Re-ID System.
 
 What this does
 ──────────────
-1. Load .env if present (Phase 8: environment config).
+1. Load .env if present.
 2. Verify camera sources are accessible before starting.
 3. Start FastAPI/Uvicorn in a background thread.
-4. Wait for the server to respond.
-5. Launch one EdgeWorker per configured camera (staggered).
+4. Wait for the server to respond on /health.
+5. Launch one EdgeWorker per configured camera (staggered to share GPU).
 6. Print the dashboard URL and block until Ctrl-C.
 
 Camera sources
 ──────────────
-Edit config.py (cameras list) OR set environment variables:
-  CAM_0_SOURCE=0            <- laptop webcam
-  CAM_0_SOURCE=videos/cam0.avi
-  CAM_0_SOURCE=rtsp://192.168.1.10/stream1
+Edit config.py (cameras list) OR set environment variables in .env:
+  CAM_0_SOURCE=0                              <- laptop/USB webcam index
+  CAM_0_SOURCE=rtsp://192.168.1.10/stream1   <- RTSP IP camera
+  CAM_0_SOURCE=http://192.168.1.20:8080/video <- phone via IP Webcam app
 
-Phase 8: Identity history is persisted to data/reid_identities.db
-         and restored on the next startup automatically.
+Identity history is persisted to data/reid_identities.db
+and restored automatically on the next startup.
 """
 from __future__ import annotations
 import os
@@ -40,18 +39,47 @@ except ImportError:
     pass
 
 
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+def check_source_available(source: str | int, timeout: float = 2.0) -> tuple[bool, str]:
+    if isinstance(source, int) or str(source).isdigit():
+        return True, "local device"
+    s = str(source).strip()
+    if s.startswith(("http://", "https://")):
+        try:
+            req = urllib.request.Request(s, headers={"User-Agent": "reid/2.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                chunk = resp.read(512)
+                if chunk:
+                    return True, "online"
+                return False, "no data stream"
+        except Exception as e:
+            return False, str(e)
+    return True, "file/stream"
+
+
 # ── Camera connectivity check ─────────────────────────────────────────────────
 def check_cameras():
     from config import CONFIG
     try:
         import cv2
     except ImportError:
-        print("[run] WARNING: OpenCV not installed — cannot pre-check cameras.")
+        print("[run] WARNING: OpenCV not installed — cannot pre-check cameras.", flush=True)
         return
 
-    print("[run] Checking camera sources...")
+    print("[run] Checking camera sources...", flush=True)
     for cam in CONFIG.cameras:
         src = cam.source
+        print(f"  Checking {cam.camera_id} ({cam.name}): {src} ...", end="", flush=True)
+
+        ok, reason = check_source_available(src, timeout=2.0)
+        if not ok:
+            print(f" [WARN] Stream unreachable ({reason})", flush=True)
+            continue
+
         try:
             src_int = int(src)
         except (ValueError, TypeError):
@@ -63,24 +91,42 @@ def check_cameras():
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.release()
-            print(f"  [OK] {cam.camera_id} ({cam.zone})  source={src!r}  {w}x{h}")
+            print(f" [OK] ({cam.zone}) {w}x{h}", flush=True)
         else:
             cap.release()
-            print(f"  [WARN] {cam.camera_id} ({cam.zone})  source={src!r}  -- COULD NOT OPEN")
-            print(f"         Check the source path or device index in config.py / .env")
+            print(f" [WARN] Could not open!", flush=True)
+            print(f"         Check the stream URL or camera index in .env", flush=True)
 
 
 # ── Server ─────────────────────────────────────────────────────────────────────
 def start_server():
     import uvicorn
     from config import CONFIG
+
+    # Use uvloop for lower-latency async I/O when available (Linux/Mac).
+    # Falls back to the default asyncio loop on Windows transparently.
+    loop_policy = "uvloop" if _uvloop_available() else "auto"
+
     uvicorn.run(
         "central.api:app",
         host=CONFIG.host,
         port=CONFIG.port,
         log_level="warning",
         access_log=False,
+        loop=loop_policy,
+        # Increase HTTP backlog for multiple simultaneous MJPEG streams
+        backlog=256,
+        # Keep-alive timeout — important for MJPEG streaming connections
+        timeout_keep_alive=75,
     )
+
+
+def _uvloop_available() -> bool:
+    try:
+        import uvloop  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def wait_for_server(host: str, port: int, timeout: float = 40.0) -> bool:
@@ -103,8 +149,13 @@ def start_edge_workers():
 
     workers = []
     for i, cam_cfg in enumerate(CONFIG.cameras):
+        ok, reason = check_source_available(cam_cfg.source, timeout=1.5)
+        if not ok:
+            print(f"[run] Skipping {cam_cfg.camera_id} ({cam_cfg.name}): offline ({reason})", flush=True)
+            continue
+
         if i > 0:
-            time.sleep(1.5)    # stagger — one CUDA context at a time
+            time.sleep(1.0)    # stagger — one CUDA context at a time
         worker = EdgeWorker(
             camera_cfg=cam_cfg,
             ingest_fn=ingest_sync,
@@ -112,8 +163,9 @@ def start_edge_workers():
         )
         thread = worker.start()
         workers.append((worker, thread))
-        print(f"[run] Edge worker started: {cam_cfg.camera_id}  ({cam_cfg.zone})")
+        print(f"[run] Edge worker started: {cam_cfg.camera_id}  ({cam_cfg.zone})", flush=True)
     return workers
+
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -121,7 +173,7 @@ def main():
     from config import CONFIG
 
     print("=" * 62)
-    print("  Cross-Camera Person Re-ID System  v2.0")
+    print("  Cross-Camera Person Re-ID System  v2.0  [PRODUCTION]")
     print("  PyTorch + FAISS + FastAPI + YOLOv8 + CUDA")
     print("=" * 62)
 
@@ -132,7 +184,7 @@ def main():
     check_cameras()
 
     # 3. Start Uvicorn (imports central.api which creates the DB + restores state)
-    print(f"\n[run] Starting server on http://{CONFIG.host}:{CONFIG.port} ...")
+    print(f"[run] Starting server on http://{CONFIG.host}:{CONFIG.port} ...")
     server_thread = threading.Thread(target=start_server, daemon=True, name="uvicorn")
     server_thread.start()
 

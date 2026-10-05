@@ -1,14 +1,16 @@
 """
-central/frame_hub.py — Live annotated-frame buffer for MJPEG streaming.
+central/frame_hub.py — Low-latency annotated-frame buffer for MJPEG streaming.
 
-Each camera worker pushes JPEG-encoded frames here.
-The FastAPI /stream/{camera_id} endpoint reads them back as an MJPEG feed
-that any <img> tag can consume directly (no WebSocket / JS needed for video).
+Production design:
+  - Buffer depth = 1  → always the most recent frame, never stale.
+  - JPEG quality = 85 → crisp enough for surveillance, small enough for LAN.
+  - threading.Event per camera → MJPEG streamer wakes *instantly* when a new
+    frame arrives instead of polling on a fixed timer.
+  - Frame is only re-encoded when the worker pushes; the API just reads bytes.
 """
 from __future__ import annotations
 import threading
-from collections import deque
-from typing import Deque, Dict, Iterator, Optional
+from typing import Dict, Iterator, Optional
 
 try:
     import cv2
@@ -16,72 +18,95 @@ try:
 except ImportError:
     _HAS_CV2 = False
 
+# JPEG quality for the MJPEG stream (0-100). 85 is a good balance of
+# sharpness vs bandwidth on a LAN.  Lower to 70 if bandwidth is tight.
+_JPEG_QUALITY = 85
+
 
 class FrameHub:
     """
-    Per-camera JPEG frame buffer + blocking iterator for MJPEG streaming.
+    Per-camera latest-frame store + event-driven MJPEG streaming.
+
+    Thread safety
+    ─────────────
+    push() is called from EdgeWorker daemon threads.
+    latest_frame() / mjpeg_stream() are called from asyncio (Uvicorn) threads.
+    A single RLock guards all mutations; reads under the same lock.
     """
 
-    def __init__(self, maxlen: int = 2) -> None:
-        self._maxlen = maxlen
-        self._buffers: Dict[str, Deque[bytes]] = {}
+    def __init__(self) -> None:
+        # Stores only the *latest* JPEG bytes per camera (depth-1 buffer).
+        self._latest: Dict[str, bytes] = {}
+        # One Event per camera; set whenever a new frame arrives.
         self._events: Dict[str, threading.Event] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _ensure_camera(self, camera_id: str) -> None:
-        if camera_id not in self._buffers:
-            self._buffers[camera_id] = deque(maxlen=self._maxlen)
+        """Create per-camera state if not already present (lock must be held)."""
+        if camera_id not in self._events:
+            self._latest[camera_id] = b""
             self._events[camera_id] = threading.Event()
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def push(self, camera_id: str, frame) -> None:
         """
-        Push a BGR numpy frame for camera_id.
-        Encodes to JPEG and notifies any waiting MJPEG readers.
+        Encode *frame* (BGR numpy array) to JPEG and store as latest.
+        Wakes any MJPEG stream generator waiting on this camera.
         """
         if not _HAS_CV2 or frame is None:
             return
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        ok, encoded = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY]
+        )
         if not ok:
             return
         jpeg_bytes = encoded.tobytes()
         with self._lock:
             self._ensure_camera(camera_id)
-            self._buffers[camera_id].append(jpeg_bytes)
-            self._events[camera_id].set()
+            self._latest[camera_id] = jpeg_bytes
+            self._events[camera_id].set()   # wake the MJPEG generator immediately
 
     def latest_frame(self, camera_id: str) -> Optional[bytes]:
+        """Return the most recent JPEG bytes, or None if no frame yet."""
         with self._lock:
             self._ensure_camera(camera_id)
-            if self._buffers[camera_id]:
-                return self._buffers[camera_id][-1]
-        return None
+            data = self._latest.get(camera_id, b"")
+            return data if data else None
 
-    def mjpeg_stream(self, camera_id: str, timeout: float = 5.0) -> Iterator[bytes]:
+    def wait_for_frame(
+        self,
+        camera_id: str,
+        last_seen: Optional[bytes],
+        timeout: float = 2.0,
+    ) -> Optional[bytes]:
         """
-        Generator that yields multipart MJPEG chunks.
-        Blocks until a new frame is available (with a timeout to avoid spin).
+        Block until a frame *different* from *last_seen* is available,
+        or until *timeout* seconds have elapsed.
+        Returns the new frame bytes, or *last_seen* on timeout.
         """
         with self._lock:
             self._ensure_camera(camera_id)
-
-        while True:
             event = self._events[camera_id]
-            event.wait(timeout=timeout)
-            frame_bytes = self.latest_frame(camera_id)
-            if frame_bytes:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                    + frame_bytes
-                    + b"\r\n"
-                )
-            with self._lock:
-                self._events[camera_id].clear()
+            current = self._latest.get(camera_id, b"")
 
-    def camera_ids(self):
+        if current and current is not last_seen:
+            return current
+
+        # Clear before waiting so we don't miss the next set()
+        event.clear()
+        event.wait(timeout=timeout)
+
         with self._lock:
-            return list(self._buffers.keys())
+            data = self._latest.get(camera_id, b"")
+            return data if data else last_seen
+
+    def camera_ids(self) -> list:
+        with self._lock:
+            return list(self._events.keys())
 
 
-# Module-level singleton, shared by api.py and edge workers
+# Module-level singleton shared by api.py and edge workers.
 FRAME_HUB = FrameHub()

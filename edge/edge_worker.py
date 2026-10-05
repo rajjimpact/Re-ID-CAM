@@ -86,10 +86,8 @@ class EdgeWorker:
     ─────────────────────────
     YOLOv8 is tried first on every frame.  If it returns 0 detections for
     _FALLBACK_TRIGGER consecutive frames, the MOG2+centroid tracker is used
-    instead.  This transparently handles both real footage (YOLOv8) and
-    synthetic demo videos where coloured rectangles aren't persons (MOG2).
-    Both trackers produce the same Detection interface so the rest of the
-    pipeline is identical in both cases.
+    instead.  Both trackers produce the same Detection interface so the rest
+    of the pipeline is identical in both cases.
     """
 
     def __init__(
@@ -230,13 +228,17 @@ class EdgeWorker:
         frame_idx = 0
         last_detections: List[Detection] = []
         last_fallback: bool = False
-        detect_stride = getattr(CONFIG, "detect_stride", 2)
+        # Live cameras: always run detection on every frame (stride=1) for
+        # real-time accuracy. File playback respects CONFIG.detect_stride.
+        detect_stride = 1 if live else getattr(CONFIG, "detect_stride", 1)
 
         while not self._stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)    # loop video files
-                next_frame_time = time.time()
+                if not live:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)    # loop video files
+                    next_frame_time = time.time()
+                time.sleep(0.02)
                 continue
 
             frame_idx += 1
@@ -315,6 +317,10 @@ class EdgeWorker:
                     for _ in range(min(skip, 10)):
                         cap.grab()
                     next_frame_time = time.time()
+            else:
+                # Live stream: no artificial sleep — let the camera driver
+                # pace the loop naturally via cap.read() blocking.
+                pass
 
 
         cap.release()
